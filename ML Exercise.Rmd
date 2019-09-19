@@ -1,0 +1,281 @@
+---
+title: "Intro to ML"
+author: "Vaibhav"
+date: "9/17/2019"
+output: html_document
+---
+
+```{r}
+# Helper packages
+library(AmesHousing)
+library(tidyverse)
+library(dslabs)
+library(dplyr)     # for data manipulation
+library(ggplot2)   # for awesome graphics
+
+
+# Modeling process packages
+library(rsample)   # for resampling procedures
+library(caret)     # for resampling and model training
+library(h2o)  
+
+# h2o set-up 
+h2o.no_progress()  # turn off h2o progress bars
+h2o.init()         # launch h2o
+
+ames <- AmesHousing::make_ames()
+attrition <- rsample::attrition
+```
+
+
+Converting to H20 object
+```{r}
+# ames data
+ames <- AmesHousing::make_ames()
+ames.h2o <- as.h2o(ames)
+
+# attrition data
+churn <- rsample::attrition %>% 
+  mutate_if(is.ordered, factor, ordered = FALSE)
+churn.h2o <- as.h2o(churn)
+```
+
+
+Ways to sample 
+```{r}
+# base R
+set.seed(123)
+index_1 <- sample(1:nrow(ames), round(nrow(ames) * 0.7))
+train_1 <- ames[index_1, ]
+test_1  <- ames[-index_1, ]
+
+# caret package
+set.seed(123)
+index_2 <- createDataPartition(ames$Sale_Price, p = 0.7, list = FALSE)
+train_2 <- ames[index_2, ]
+test_2  <- ames[-index_2, ]
+
+# rsample package
+set.seed(123)
+split_1  <- initial_split(ames, prop = 0.7)
+train_3  <- training(split_1)
+test_3   <- testing(split_1)
+
+# h2o package
+split_2 <- h2o.splitFrame(ames.h2o, ratios = 0.7, seed = 123)
+train_4 <- split_2[[1]]
+test_4  <- split_2[[2]]
+```
+
+
+#Stratified random sampling
+```{r}
+
+set.seed(123)
+index_1 <- createDataPartition(churn$Attrition, p = 0.7, list = FALSE)
+train_1 <- churn[index_1, ]
+test_1  <- churn[-index_1, ]
+
+table(churn$Attrition) %>% prop.table()
+table(train_1$Attrition) %>% prop.table()
+table(test_1$Attrition) %>% prop.table()
+
+```
+
+
+```{r}
+set.seed(123)
+split  <- initial_split(ames, prop = 0.7, strata = "Sale_Price")
+ames_train  <- training(split)
+ames_test   <- testing(split)
+# create a resampling method
+cv <- trainControl(
+  method = "repeatedcv", 
+  number = 10, 
+  repeats = 5
+  )
+
+# create a hyperparameter grid search
+hyper_grid <- expand.grid(k = seq(2, 25, by = 1))
+
+# fit knn model and perform grid search
+knn_fit <- train(
+  Sale_Price ~ ., 
+  data = ames_train, 
+  method = "knn", 
+  trControl = cv, 
+  tuneGrid = hyper_grid,
+  metric = "RMSE"
+  )
+```
+
+
+
+#Feature Engineering
+```{r}
+library(recipes)
+
+# log transformation
+ames_recipe <- recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_log(all_outcomes())
+
+
+```
+
+
+Visuliasing Missing values 
+```{r}
+AmesHousing::ames_raw %>%
+  is.na() %>%
+  reshape2::melt() %>%
+  ggplot(aes(Var2, Var1, fill=value)) + 
+    geom_raster() + 
+    coord_flip() +
+    scale_y_continuous(NULL, expand = c(0, 0)) +
+    scale_fill_grey(name = "", labels = c("Present", "Missing")) +
+    xlab("Observation") +
+    theme(axis.text.y  = element_text(size = 4))
+
+library(visdat)
+vis_miss(AmesHousing::ames_raw, cluster = TRUE)
+
+```
+
+
+Imputing Missing Values
+```{r}
+
+ames_recipe %>%
+  step_medianimpute(Gr_Liv_Area)
+
+
+ames_recipe %>%
+  step_knnimpute(all_predictors(), neighbors = 6)
+
+#Using Trees
+ames_recipe %>%
+  step_bagimpute(all_predictors())
+```
+
+Filtering Near Zero Variable
+```{r}
+caret::nearZeroVar(ames_train, saveMetrics= TRUE) %>% 
+  rownames_to_column() %>% 
+  filter(nzv)
+
+#
+recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_YeoJohnson(all_numeric())
+```
+
+#Scaling
+```{r}
+ames_recipe %>%
+  step_center(all_numeric(), -all_outcomes()) %>%
+  step_scale(all_numeric(), -all_outcomes())
+```
+
+#Lumping factors into one
+```{r}
+# lump levels for two features
+lumping <- recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_other(Neighborhood, threshold = .01, other = "other") %>%
+   step_other(Screen_Porch, threshold = .1, other = ">0")
+
+# apply this blue print --> you will learn about this at the end of the chapter
+apply_2_training <- prep(lumping, training = ames_train) %>%
+  bake(ames_train)
+
+# new distribution of Neighborhood
+count(apply_2_training, Neighborhood) %>% arrange(n)
+```
+
+#One hot encoding
+```{r}
+# lump levels for two features
+recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_dummy(all_nominal(), one_hot = TRUE)
+
+
+# label encoded
+recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_integer(MS_SubClass) %>%
+  prep(ames_train) %>%
+  bake(ames_train) %>%
+  count(MS_SubClass)
+```
+
+
+
+```{r}
+iris <- iris %>% mutate(type=ifelse(Species=="setosa","S","NS"))
+rec <- recipe(Species ~., data=iris)  
+
+rec <- rec %>% 
+  step_log(Sepal.Width) %>% 
+  step_dummy(type)
+  
+iris_train <- iris[1:100,]
+iris_test <- iris[101:150,]
+rec_trained <- prep(rec, training=iris_train, retain=TRUE)
+design_mat <- bake(rec_trained, new_data=iris_test)
+```
+
+Using recipe on amaes in new data
+```{r}
+library(caret)
+
+set.seed(123)
+index_2 <- createDataPartition(ames$Sale_Price, p = 0.7, list = FALSE)
+ames_train <- ames[index_2, ]
+ames_test  <- ames[-index_2, ]
+
+
+
+blueprint <- recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_nzv(all_nominal())  %>%
+  step_integer(matches("Qual|Cond|QC|Qu")) %>%
+  step_center(all_numeric(), -all_outcomes()) %>%
+  step_scale(all_numeric(), -all_outcomes()) %>%
+  step_pca(all_numeric(), -all_outcomes())
+  
+blueprint
+
+prepare <- prep(blueprint, training = ames_train)
+prepare
+
+baked_train <- bake(prepare, new_data = ames_train)
+baked_test <- bake(prepare, new_data = ames_test)
+baked_train
+```
+
+
+```{r}
+blueprint <- recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_nzv(all_nominal()) %>%
+  step_integer(matches("Qual|Cond|QC|Qu")) %>%
+  step_center(all_numeric(), -all_outcomes()) %>%
+  step_scale(all_numeric(), -all_outcomes()) %>%
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)
+
+# create a resampling method
+cv <- trainControl(
+  method = "repeatedcv", 
+  number = 10, 
+  repeats = 5
+  )
+
+# create a hyperparameter grid search
+hyper_grid <- expand.grid(k = seq(2, 25, by = 1))
+
+# fit knn model and perform grid search
+knn_fit2 <- train(
+  blueprint, 
+  data = ames_train, 
+  method = "knn", 
+  trControl = cv, 
+  tuneGrid = hyper_grid,
+  metric = "RMSE"
+  )
+```
+
