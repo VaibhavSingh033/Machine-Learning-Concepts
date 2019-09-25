@@ -1,0 +1,150 @@
+---
+title: "MARS (Multivariate Adaptive Regression Splines)"
+author: "Vaibhav"
+date: "9/25/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(earth)
+# Helper packages
+library(AmesHousing)
+library(tidyverse)
+library(dslabs)
+library(dplyr)     # for data manipulation
+library(ggplot2)   # for awesome graphics
+
+
+# Modeling process packages
+library(rsample)   # for resampling procedures
+library(caret)     # for resampling and model training
+
+ames <- AmesHousing::make_ames()
+attrition <- rsample::attrition
+
+set.seed(123)  # for reproducibility
+index_1 <- sample(1:nrow(ames), round(nrow(ames) * 0.7))
+ames_train <- ames[index_1, ]
+ames_test  <- ames[-index_1, ]
+```
+
+```{r}
+# create a tuning grid
+hyper_grid <- expand.grid(
+  degree = 1:3, 
+  nprune = seq(2, 100, length.out = 10) %>% floor()
+)
+
+head(hyper_grid)
+##
+```
+
+```{r}
+set.seed(123)
+
+# cross validated model
+cv_mars <- train(
+  x = subset(ames_train, select = -Sale_Price),
+  y = ames_train$Sale_Price,
+  method = "earth",
+  metric = "RMSE",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneGrid = hyper_grid
+)
+
+# best model
+cv_mars$bestTune
+##    nprune degree
+## 14     34      2
+
+# plot results
+ggplot(cv_mars)
+
+```
+
+Fitting Multivariate adaptive regression 
+```{r}
+mars1 <- earth(
+  Sale_Price ~ .,  
+  data = ames_train   
+)
+
+summary(mars1)
+# Print model summary
+print(mars1)
+
+
+plot(mars1, which = 1)
+
+mars2 <- earth(
+  Sale_Price ~ .,  
+  data = ames_train,
+  degree = 2
+)
+
+# check out the first 10 coefficient terms
+summary(mars2) %>% .$coefficients %>% head(10)
+##   
+
+# variable importance plots
+p1 <- vip(cv_mars, num_features = 40, bar = FALSE, value = "gcv") + ggtitle("GCV")
+p2 <- vip(cv_mars, num_features = 40, bar = FALSE, value = "rss") + ggtitle("RSS")
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+# Construct partial dependence plots
+p1 <- partial(cv_mars, pred.var = "Gr_Liv_Area", grid.resolution = 10) %>% 
+  autoplot()
+p2 <- partial(cv_mars, pred.var = "Year_Built", grid.resolution = 10) %>% 
+  autoplot()
+p3 <- partial(cv_mars, pred.var = c("Gr_Liv_Area", "Year_Built"), 
+              grid.resolution = 10) %>% 
+  plotPartial(levelplot = FALSE, zlab = "yhat", drape = TRUE, colorkey = TRUE, 
+              screen = list(z = -20, x = -60))
+
+# Display plots side by side
+gridExtra::grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+
+
+
+Fitting MARS on categorical data 
+```{r}
+# get attrition data
+df <- attrition %>% mutate_if(is.ordered, factor, ordered = FALSE)
+
+# Create training (70%) and test (30%) sets for the rsample::attrition data.
+# Use set.seed for reproducibility
+set.seed(123)
+churn_split <- initial_split(df, prop = .7, strata = "Attrition")
+churn_train <- training(churn_split)
+churn_test  <- testing(churn_split)
+
+
+# for reproducibiity
+set.seed(123)
+
+# cross validated model
+tuned_mars <- train(
+  x = subset(churn_train, select = -Attrition),
+  y = churn_train$Attrition,
+  method = "earth",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneGrid = hyper_grid
+)
+
+# best model
+tuned_mars$bestTune
+##   nprune degree
+## 5     45      1
+
+# plot results
+ggplot(tuned_mars)
+```
+
