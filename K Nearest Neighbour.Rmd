@@ -1,0 +1,127 @@
+---
+title: "K Nearest Neighbour"
+author: "Vaibhav"
+date: "9/25/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Helper packages
+library(dplyr)      # for data wrangling
+library(ggplot2)    # for awesome graphics
+library(rsample)    # for creating validation splits
+library(recipes)    # for feature engineering
+
+# Modeling packages
+library(caret)       # for fitting KNN models
+```
+
+
+
+```{r}
+# create training (70%) set for the rsample::attrition data.
+attrit <- attrition %>% mutate_if(is.ordered, factor, ordered = FALSE)
+set.seed(123)
+churn_split <- initial_split(attrit, prop = .7, strata = "Attrition")
+churn_train <- training(churn_split)
+
+# import MNIST training data
+mnist <- dslabs::read_mnist()
+names(mnist)
+## [1] "train" "tes
+```
+
+
+```{r}
+# create blueprint
+blueprint <- recipe(Attrition ~ ., data = churn_train) %>%
+  step_nzv(all_nominal()) %>%
+  step_integer(contains("Satisfaction")) %>%
+  step_integer(WorkLifeBalance) %>%
+  step_integer(JobInvolvement) %>%
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>%
+  step_center(all_numeric(), -all_outcomes()) %>%
+  step_scale(all_numeric(), -all_outcomes())
+
+# create a resampling method
+cv <- trainControl(
+  method = "repeatedcv", 
+  number = 10, 
+  repeats = 5,
+  classProbs = TRUE,                 
+  summaryFunction = twoClassSummary
+  )
+
+# create a hyperparameter grid search
+hyper_grid <- expand.grid(k = floor(seq(1, nrow(churn_train)/3, length.out = 20)))
+
+# fit knn model and perform grid search
+knn_grid <- train(
+  blueprint, 
+  data = churn_train, 
+  method = "knn", 
+  trControl = cv, 
+  tuneGrid = hyper_grid,
+  metric = "ROC"
+  )
+
+ggplot(knn_grid)
+```
+
+
+MNIST Data
+```{r}
+
+set.seed(123)
+index <- sample(nrow(mnist$train$images), size = 10000)
+mnist_x <- mnist$train$images[index, ]
+mnist_y <- factor(mnist$train$labels[index])
+```
+
+```{r}
+mnist_x %>%
+  as.data.frame() %>%
+  map_df(sd) %>%
+  gather(feature, sd) %>%
+  ggplot(aes(sd)) +
+  geom_histogram(binwidth = 1)
+```
+
+```{r}
+library(recipes)
+# create blueprint
+blueprint <- recipe(Attrition ~ ., data = churn_train) %>%
+  step_nzv(all_nominal()) %>%
+  step_integer(contains("Satisfaction")) %>%
+  step_integer(WorkLifeBalance) %>%
+  step_integer(JobInvolvement) %>%
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>%
+  step_center(all_numeric(), -all_outcomes()) %>%
+  step_scale(all_numeric(), -all_outcomes())
+
+# create a resampling method
+cv <- trainControl(
+  method = "repeatedcv", 
+  number = 10, 
+  repeats = 5,
+  classProbs = TRUE,                 
+  summaryFunction = twoClassSummary
+  )
+
+# create a hyperparameter grid search
+hyper_grid <- expand.grid(k = floor(seq(1, nrow(churn_train)/3, length.out = 20)))
+
+# fit knn model and perform grid search
+knn_grid <- train(
+  blueprint, 
+  data = churn_train, 
+  method = "knn", 
+  trControl = cv, 
+  tuneGrid = hyper_grid,
+  metric = "ROC"
+  )
+
+ggplot(knn_grid)
+```
+
+
